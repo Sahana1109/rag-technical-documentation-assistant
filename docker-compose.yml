@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: rag-doc-api
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LLM_PROVIDER=gemini
+      - LLM_MODEL=gemini-1.5-flash
+      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
+      - FEEDBACK_DB_PATH=/app/data/feedback.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  ui:
+    build: .
+    container_name: rag-doc-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    command: ["streamlit", "run", "ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    depends_on:
+      - api
+    restart: unless-stopped
