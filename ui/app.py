@@ -145,6 +145,8 @@ if st.button("Ask Assistant", type="primary"):
     if not query_text.strip():
         st.warning("Please enter a question.")
     else:
+        # Clear previous response to prevent stale display
+        st.session_state.pop("latest_query_response", None)
         with st.spinner("Analyzing query, searching documentation, and verifying grounding..."):
             try:
                 res = requests.post(f"{API_URL}/query", json={"question": query_text.strip()}, timeout=20)
@@ -152,6 +154,9 @@ if st.button("Ask Assistant", type="primary"):
                     data = res.json()
                     st.session_state["latest_query_response"] = data
                     st.session_state["latest_question"] = query_text.strip()
+                elif res.status_code == 503:
+                    st.error(f"⚠️ Configuration Notice (HTTP 503):\n{res.json().get('detail', res.text)}")
+                    st.info("💡 To run offline without a paid API key, set `LLM_PROVIDER=mock` in your `.env` file.")
                 else:
                     st.error(f"Query Error ({res.status_code}): {res.json().get('detail', res.text)}")
             except Exception as e:

@@ -76,6 +76,8 @@ def query_analysis_node(state: GraphState) -> Dict[str, Any]:
         if parsed:
             query_type = parsed.get("query_type", "conceptual")
             rewritten_query = parsed.get("rewritten_query", question)
+    except (ValueError, RuntimeError):
+        raise
     except Exception as e:
         logger.warning(f"Query analysis LLM call failed: {e}. Using original question as fallback.")
 
@@ -104,8 +106,8 @@ def document_grading_node(state: GraphState) -> Dict[str, Any]:
     Filters out irrelevant chunks before answer generation.
     """
     retrieved = state.get("retrieved_documents", [])
-    query = state.get("rewritten_query") or state.get("original_question", "")
-    logger.info(f"[Node: Document Grading] Grading {len(retrieved)} retrieved chunks.")
+    target_question = state.get("original_question") or state.get("rewritten_query", "")
+    logger.info(f"[Node: Document Grading] Grading {len(retrieved)} retrieved chunks against question: '{target_question}'.")
 
     if not retrieved:
         return {
@@ -119,7 +121,7 @@ def document_grading_node(state: GraphState) -> Dict[str, Any]:
 
     for doc in retrieved:
         prompt = DOCUMENT_GRADING_PROMPT.format(
-            question=query,
+            question=target_question,
             document_content=doc.get("content", "")
         )
         is_relevant = False
@@ -137,6 +139,8 @@ def document_grading_node(state: GraphState) -> Dict[str, Any]:
                 doc_words = set(doc.get("content", "").lower().split())
                 is_relevant = len(query_words.intersection(doc_words)) > 0
                 reason = "Heuristic keyword overlap fallback."
+        except (ValueError, RuntimeError):
+            raise
         except Exception as e:
             logger.warning(f"Grading chunk failed: {e}. Defaulting to relevant.")
             is_relevant = True
@@ -246,14 +250,18 @@ def generate_answer_node(state: GraphState) -> Dict[str, Any]:
     try:
         response = llm.invoke([HumanMessage(content=prompt)])
         answer_text = response.content
+        sufficient = True
+    except (ValueError, RuntimeError):
+        raise
     except Exception as e:
-        logger.error(f"Answer generation failed: {e}")
-        answer_text = "An error occurred while generating the answer from retrieved documentation."
+        logger.error(f"Answer generation failed: {e}", exc_info=True)
+        answer_text = f"An error occurred while generating the answer: {str(e)}"
+        sufficient = False
 
     return {
         "answer": answer_text,
         "citations": citations,
-        "sufficient_context": True
+        "sufficient_context": sufficient
     }
 
 

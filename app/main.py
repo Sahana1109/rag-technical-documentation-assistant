@@ -123,6 +123,7 @@ def health_check():
     Evaluates system health and dependency connectivity.
     Reports ChromaDB vector count, embedding model, and LLM provider configuration status.
     """
+    current_settings = get_settings()
     vdb_status = "unreachable"
     indexed_chunks = 0
 
@@ -134,17 +135,17 @@ def health_check():
         logger.error(f"Vector database health check failed: {e}")
         vdb_status = f"error: {str(e)}"
 
-    is_healthy = vdb_status == "connected"
+    is_healthy = (vdb_status == "connected") and (current_settings.is_llm_configured or current_settings.llm_provider == "mock")
 
     return HealthResponse(
         status="healthy" if is_healthy else "degraded",
-        app_name=settings.app_name,
-        version=settings.app_version,
+        app_name=current_settings.app_name,
+        version=current_settings.app_version,
         vector_db_status=vdb_status,
         total_indexed_chunks=indexed_chunks,
-        llm_provider=settings.llm_provider,
-        llm_configured=settings.is_llm_configured,
-        embedding_model=settings.embedding_model
+        llm_provider=current_settings.llm_provider,
+        llm_configured=current_settings.is_llm_configured,
+        embedding_model=current_settings.embedding_model
     )
 
 
@@ -159,15 +160,40 @@ def query_documentation(request: QueryRequest):
     - Grounded answer generation with citations
     - Grounding verification
     """
+    current_settings = get_settings()
+
     if not request.question or not request.question.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question cannot be empty or contain only whitespace."
         )
 
+    # Check for unconfigured real LLM provider
+    if current_settings.llm_provider != "mock" and not current_settings.is_llm_configured:
+        key_var = "GOOGLE_API_KEY" if current_settings.llm_provider == "gemini" else "OPENAI_API_KEY"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"LLM provider '{current_settings.llm_provider}' is selected, but {key_var} is not configured. "
+                f"Please add a valid {key_var} to your .env file or set LLM_PROVIDER=mock for offline testing."
+            )
+        )
+
     try:
         response = run_rag_pipeline(request.question)
         return response
+    except ValueError as ve:
+        logger.error(f"Configuration or validation error during RAG query: {ve}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(ve)
+        )
+    except RuntimeError as re_err:
+        logger.error(f"Upstream LLM runtime failure during RAG query: {re_err}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Upstream LLM failure: {str(re_err)}"
+        )
     except Exception as e:
         logger.error(f"Query processing failed: {e}", exc_info=True)
         raise HTTPException(
